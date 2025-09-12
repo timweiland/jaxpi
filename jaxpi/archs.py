@@ -153,40 +153,6 @@ class Mlp(nn.Module):
 
         x = Dense(features=self.out_dim, reparam=self.reparam)(x)
         return x
-    
-    
-
-class DFRConcentrationModel(nn.Module):
-    config: dict
-
-    def setup(self):
-        self.net1 = Mlp(**self.config.arch1)
-        self.net2 = Mlp(**self.config.arch2)
-        self.net3 = Mlp(**self.config.arch2)
-        self.net4 = Mlp(**self.config.arch2)
-    
-    def __call__(self, x):
-        x2 = jnp.stack([x[1]])
-        eps_inf = self.net2(x2)
-
-        delta_net = self.net3(x2)[0]
-        delta_bounds = jnp.array([jnp.log(0.00001), jnp.log(0.2)])
-        low, high = jnp.min(delta_bounds), jnp.max(delta_bounds)
-        delta_bounded = jnp.tanh(delta_net) * ((high - low) / 2.0) + ((high + low) / 2.0)
-        delta = jnp.array([delta_bounded])
-        
-        tau_net = self.net4(x2)[0]
-        tau_bounds = jnp.array([jnp.log(jnp.power(10.0, -4)), jnp.log(jnp.power(10.0, -3))])
-        low, high = jnp.min(tau_bounds), jnp.max(tau_bounds)
-        tau_bounded = jnp.tanh(tau_net) * ((high - low) / 2.0) + ((high + low) / 2.0)
-        tau = jnp.array([tau_bounded])
-
-        y2 = jnp.concatenate([eps_inf, delta, tau], axis=-1)
-
-        x1 = jnp.stack([x[0]])
-        x1 = jnp.concatenate([x1, y2], axis=-1)
-        y1 = self.net1(x1)
-        return y1, y2
 
 
 

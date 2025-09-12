@@ -6,10 +6,6 @@ Changes are minimal (40 lines) and do not change the core functionality of the l
 - Support for LBFGS optimizer (https://github.com/google/flax/pull/4471), which was not used in the results but only for experimentation.
 - A subnet architecture for temperature-dependent examples.
 
-## Briefly on changes for inverse-DFR fork 
-
-Added DFR architecture and renamed DR temperature model for coherence, see changes in [this commit](https://github.com/emiresenov/jaxpi/commit/ec4e99ba7ffbbc8e65ecbf48ab7148134d6a706d). Again, minimal modifications that are easy to review and do not change the functionality of the original JAX-PI engine.
-
 ⬇️⬇️⬇️ **original doc continues down below** ⬇️⬇️⬇️
 
 # JAX-PI
