@@ -1,4 +1,21 @@
-## Briefly on changes for inverse-DR fork 
+## Changes in this fork (timweiland)
+
+This fork builds on [emiresenov's inverse-DR fork](https://github.com/emiresenov/jaxpi) and adds **single-device (CPU/single-GPU) support**, enabling local debugging before deploying to multi-GPU clusters.
+
+Changes ([see commit](https://github.com/timweiland/jaxpi/commit/ad1e298)):
+- Detect single-device systems via `len(jax.devices()) == 1`
+- Skip `jax_utils.replicate()` when not needed (avoids adding spurious device axis)
+- Use `jit` instead of `pmap` for `step()` and `update_weights()` on single device
+- Fix `tree_map` import for compatibility with newer JAX versions
+
+**Installation:**
+```bash
+pip install git+https://github.com/timweiland/jaxpi.git
+```
+
+---
+
+## Briefly on changes for inverse-DR fork (emiresenov)
 
 Changes are minimal (40 lines) and do not change the core functionality of the library, see them in [this commit](https://github.com/emiresenov/jaxpi/commit/1f91bea646e6b9624ddaaf6a11553197974bd74e). These include:
 - An inverse PINN class where the user enters their inverse parameters in the config of their example.
