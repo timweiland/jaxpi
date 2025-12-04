@@ -4,14 +4,33 @@ from typing import Any, Callable, Sequence, Tuple, Optional, Dict
 from flax.training import train_state
 from flax import jax_utils
 
+import jax
 import jax.numpy as jnp
-from jax import lax, jit, grad, pmap, random, tree_map, jacrev, value_and_grad
+from jax import lax, jit, grad, pmap, random, jacrev, value_and_grad
 from jax.tree_util import tree_map, tree_reduce, tree_leaves
 
 import optax
 
 from jaxpi import archs
 from jaxpi.utils import flatten_pytree
+
+# Check if we're running on single device (e.g., CPU-only)
+_SINGLE_DEVICE = len(jax.devices()) == 1
+
+def _maybe_pmap(fn, axis_name="batch", static_broadcasted_argnums=()):
+    """Use jit instead of pmap on single-device systems."""
+    if _SINGLE_DEVICE:
+        # For single device, use jit and ignore axis_name
+        return partial(jit, static_argnums=static_broadcasted_argnums)(fn)
+    else:
+        return partial(pmap, axis_name=axis_name, static_broadcasted_argnums=static_broadcasted_argnums)(fn)
+
+def _maybe_pmean(x, axis_name):
+    """Skip pmean on single-device systems."""
+    if _SINGLE_DEVICE:
+        return x
+    else:
+        return lax.pmean(x, axis_name)
 
 
 class TrainState(train_state.TrainState):
@@ -107,7 +126,11 @@ def _create_train_state(config, inverse_mode=False):
         momentum=config.weighting.momentum,
     )
 
-    return jax_utils.replicate(state)
+    # Only replicate for multi-device setups
+    if _SINGLE_DEVICE:
+        return state
+    else:
+        return jax_utils.replicate(state)
 
 
 class PINN:
@@ -169,24 +192,53 @@ class PINN:
 
         return w
 
-    @partial(pmap, axis_name="batch", static_broadcasted_argnums=(0,))
     def update_weights(self, state, batch, *args):
-        weights = self.compute_weights(state.params, batch, *args)
-        weights = lax.pmean(weights, "batch")
-        state = state.apply_weights(weights=weights)
-        return state
+        @partial(jit, static_argnums=(0,))
+        def _update_weights_jit(self, state, batch, *args):
+            weights = self.compute_weights(state.params, batch, *args)
+            state = state.apply_weights(weights=weights)
+            return state
 
-    @partial(pmap, axis_name="batch", static_broadcasted_argnums=(0,))
-    def step(self, state, batch, *args):
-        grads = grad(self.loss)(state.params, state.weights, batch, *args)
-        grads = lax.pmean(grads, "batch")
-        if self.config.optim.optimizer == "LBFGS":
-            value_fn = lambda params: self.loss(params, state.weights, batch, *args)
-            value, grads = value_and_grad(value_fn)(state.params)
-            state = state.apply_gradients(grads=grads, grad=grads, value=value, value_fn=value_fn)
+        @partial(pmap, axis_name="batch", static_broadcasted_argnums=(0,))
+        def _update_weights_pmap(self, state, batch, *args):
+            weights = self.compute_weights(state.params, batch, *args)
+            weights = lax.pmean(weights, "batch")
+            state = state.apply_weights(weights=weights)
+            return state
+
+        if _SINGLE_DEVICE:
+            return _update_weights_jit(self, state, batch, *args)
         else:
-            state = state.apply_gradients(grads=grads)
-        return state
+            return _update_weights_pmap(self, state, batch, *args)
+
+    def step(self, state, batch, *args):
+        @partial(jit, static_argnums=(0,))
+        def _step_jit(self, state, batch, *args):
+            grads = grad(self.loss)(state.params, state.weights, batch, *args)
+            if self.config.optim.optimizer == "LBFGS":
+                value_fn = lambda params: self.loss(params, state.weights, batch, *args)
+                value, grads = value_and_grad(value_fn)(state.params)
+                state = state.apply_gradients(grads=grads, grad=grads, value=value, value_fn=value_fn)
+            else:
+                state = state.apply_gradients(grads=grads)
+            return state
+
+        @partial(pmap, axis_name="batch", static_broadcasted_argnums=(0,))
+        def _step_pmap(self, state, batch, *args):
+            grads = grad(self.loss)(state.params, state.weights, batch, *args)
+            grads = lax.pmean(grads, "batch")
+            if self.config.optim.optimizer == "LBFGS":
+                value_fn = lambda params: self.loss(params, state.weights, batch, *args)
+                value, grads = value_and_grad(value_fn)(state.params)
+                state = state.apply_gradients(grads=grads, grad=grads, value=value, value_fn=value_fn)
+            else:
+                state = state.apply_gradients(grads=grads)
+            return state
+
+        if _SINGLE_DEVICE:
+            return _step_jit(self, state, batch, *args)
+        else:
+            return _step_pmap(self, state, batch, *args)
 
 
 class ForwardIVP(PINN):
