@@ -192,53 +192,53 @@ class PINN:
 
         return w
 
+    @partial(jit, static_argnums=(0,))
+    def _update_weights_jit(self, state, batch, *args):
+        weights = self.compute_weights(state.params, batch, *args)
+        state = state.apply_weights(weights=weights)
+        return state
+
+    @partial(pmap, axis_name="batch", static_broadcasted_argnums=(0,))
+    def _update_weights_pmap(self, state, batch, *args):
+        weights = self.compute_weights(state.params, batch, *args)
+        weights = lax.pmean(weights, "batch")
+        state = state.apply_weights(weights=weights)
+        return state
+
     def update_weights(self, state, batch, *args):
-        @partial(jit, static_argnums=(0,))
-        def _update_weights_jit(self, state, batch, *args):
-            weights = self.compute_weights(state.params, batch, *args)
-            state = state.apply_weights(weights=weights)
-            return state
-
-        @partial(pmap, axis_name="batch", static_broadcasted_argnums=(0,))
-        def _update_weights_pmap(self, state, batch, *args):
-            weights = self.compute_weights(state.params, batch, *args)
-            weights = lax.pmean(weights, "batch")
-            state = state.apply_weights(weights=weights)
-            return state
-
         if _SINGLE_DEVICE:
-            return _update_weights_jit(self, state, batch, *args)
+            return self._update_weights_jit(state, batch, *args)
         else:
-            return _update_weights_pmap(self, state, batch, *args)
+            return self._update_weights_pmap(state, batch, *args)
+
+    @partial(jit, static_argnums=(0,))
+    def _step_jit(self, state, batch, *args):
+        grads = grad(self.loss)(state.params, state.weights, batch, *args)
+        if self.config.optim.optimizer == "LBFGS":
+            value_fn = lambda params: self.loss(params, state.weights, batch, *args)
+            value, grads = value_and_grad(value_fn)(state.params)
+            state = state.apply_gradients(grads=grads, grad=grads, value=value, value_fn=value_fn)
+        else:
+            state = state.apply_gradients(grads=grads)
+        return state
+
+    @partial(pmap, axis_name="batch", static_broadcasted_argnums=(0,))
+    def _step_pmap(self, state, batch, *args):
+        grads = grad(self.loss)(state.params, state.weights, batch, *args)
+        grads = lax.pmean(grads, "batch")
+        if self.config.optim.optimizer == "LBFGS":
+            value_fn = lambda params: self.loss(params, state.weights, batch, *args)
+            value, grads = value_and_grad(value_fn)(state.params)
+            state = state.apply_gradients(grads=grads, grad=grads, value=value, value_fn=value_fn)
+        else:
+            state = state.apply_gradients(grads=grads)
+        return state
 
     def step(self, state, batch, *args):
-        @partial(jit, static_argnums=(0,))
-        def _step_jit(self, state, batch, *args):
-            grads = grad(self.loss)(state.params, state.weights, batch, *args)
-            if self.config.optim.optimizer == "LBFGS":
-                value_fn = lambda params: self.loss(params, state.weights, batch, *args)
-                value, grads = value_and_grad(value_fn)(state.params)
-                state = state.apply_gradients(grads=grads, grad=grads, value=value, value_fn=value_fn)
-            else:
-                state = state.apply_gradients(grads=grads)
-            return state
-
-        @partial(pmap, axis_name="batch", static_broadcasted_argnums=(0,))
-        def _step_pmap(self, state, batch, *args):
-            grads = grad(self.loss)(state.params, state.weights, batch, *args)
-            grads = lax.pmean(grads, "batch")
-            if self.config.optim.optimizer == "LBFGS":
-                value_fn = lambda params: self.loss(params, state.weights, batch, *args)
-                value, grads = value_and_grad(value_fn)(state.params)
-                state = state.apply_gradients(grads=grads, grad=grads, value=value, value_fn=value_fn)
-            else:
-                state = state.apply_gradients(grads=grads)
-            return state
-
         if _SINGLE_DEVICE:
-            return _step_jit(self, state, batch, *args)
+            return self._step_jit(state, batch, *args)
         else:
-            return _step_pmap(self, state, batch, *args)
+            return self._step_pmap(state, batch, *args)
 
 
 class ForwardIVP(PINN):
